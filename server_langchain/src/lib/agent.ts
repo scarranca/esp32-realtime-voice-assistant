@@ -1,4 +1,4 @@
-import { Tool, StructuredTool } from "@langchain/core/tools";
+import { StructuredTool } from "@langchain/core/tools";
 import path from "path";
 import zodToJsonSchema from "zod-to-json-schema";
 import { AudioManager } from "./audio";
@@ -42,7 +42,7 @@ export interface OpenAIVoiceReactAgentOptions {
     model: string;
     apiKey?: string;
     instructions?: string;
-    tools?: Tool[];
+    tools?: StructuredTool[];
     url?: string;
     audioConfig?: AudioConfig;
 }
@@ -51,7 +51,7 @@ export class OpenAIVoiceReactAgent {
     // Protected properties
     protected connection: OpenAIWebSocketConnection;
     protected instructions?: string;
-    protected tools: Tool[];
+    protected tools: StructuredTool[];
     protected BUFFER_SIZE = 4800;
 
     // Public properties
@@ -195,12 +195,18 @@ export class OpenAIVoiceReactAgent {
 
     private setupBinaryMessageHandler(ws: WebSocket): void {
         ws.on('message', async (data) => {
-            console.log('===Received binary message:', {
-                type: data instanceof Buffer ? 'Buffer' : 'ArrayBuffer',
-                size: Buffer.isBuffer(data) ? data.length : data.byteLength
-            });
-            if (data instanceof Buffer || data instanceof ArrayBuffer) {
-                const buffer = data instanceof ArrayBuffer ? Buffer.from(data) : data;
+            const buffer = Buffer.isBuffer(data)
+                ? data
+                : data instanceof ArrayBuffer
+                    ? Buffer.from(data)
+                    : Array.isArray(data)
+                        ? Buffer.concat(data)
+                        : null;
+            if (buffer) {
+                console.log('===Received binary message:', {
+                    type: 'Buffer',
+                    size: buffer.length
+                });
                 await this.connection.handleIncomingAudio(buffer);
             }
         });

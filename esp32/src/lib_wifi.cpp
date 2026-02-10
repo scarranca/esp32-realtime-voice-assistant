@@ -1,58 +1,29 @@
-
-#include "wifi.h"
-#include "config.h"
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <Arduino.h>
+#include "config.h"
+#include "lib_wifi.h"
 
-// WiFi credentials
-const char *ssid = WIFI_SSID;
-const char *password = WIFI_PASSWORD;
-
-void setupWiFi()
-{
-    WiFi.disconnect();
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
-
-    while (WiFi.status() != WL_CONNECTED)
-    {
-        delay(1500);
-    }
-
-    Serial.println("WiFi connected");
-}
-
-void setupWiFiStation()
-{
-
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.begin(ssid, password);
-
-    Serial.print("Connecting to WiFi");
-    while (WiFi.status() != WL_CONNECTED)
-    {
-        delay(500);
-        Serial.print(".");
-    }
-    Serial.println();
-
-    Serial.print("Connected to WiFi. IP address: ");
-    Serial.println(WiFi.localIP());
-}
+const char* WIFI_SSID = "CAHDZ";
+const char* WIFI_PASSWORD = "CarrancA172428";
+const char* WEBSOCKET_HOST = "esp32-voice-bot-production.up.railway.app";
 
 void connectToWiFi()
 {
-    Serial.println("Connecting to WiFi...");
-    WiFi.begin(ssid, password);
+    Serial.println("[WiFi] Connecting...");
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-    while (WiFi.status() != WL_CONNECTED)
-    {
+    while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
     }
 
-    Serial.println("");
-    Serial.println("WiFi connected");
-    Serial.println("IP address: ");
+    Serial.println();
+    Serial.print("[WiFi] Connected, IP: ");
     Serial.println(WiFi.localIP());
+
+    // Disable WiFi power saving to prevent random latency spikes
+    esp_wifi_set_ps(WIFI_PS_NONE);
+    Serial.println("[WiFi] Power saving disabled");
 }

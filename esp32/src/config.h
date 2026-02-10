@@ -1,74 +1,60 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// WiFi credentials
+#include <driver/i2s.h>
 
-const int WEBSOCKET_PORT = 8888;
+// ── Firmware version ───────────────────────────────────────────────────────
+#define FIRMWARE_VERSION "V5.0"
+
+// ── WiFi credentials ────────────────────────────────────────────────────────
 extern const char* WIFI_SSID;
 extern const char* WIFI_PASSWORD;
+
+// ── WebSocket server ────────────────────────────────────────────────────────
 extern const char* WEBSOCKET_HOST;
-// I2S Microphone pins
-#define I2S_SD 45  // Serial Data
-#define I2S_WS 41  // Word Select (LRCLK)
-#define I2S_SCK 47 // Serial Clock
+#define WEBSOCKET_PORT 443
+#define WS_PATH "/ws/voice"
 
-// Speaker pins
-#define I2S_SPEAKER_BCLK 20 // Bit Clock
-#define I2S_SPEAKER_LRC 21  // Left Right Clock (Word Select)
-#define I2S_SPEAKER_DIN 19  // Data Input
+// ── I2S Microphone pins (INMP441) ──────────────────────────────────────────
+#define I2S_MIC_BCLK 4    // Bit Clock
+#define I2S_MIC_WS   5    // Word Select (LRCLK)
+#define I2S_MIC_DIN  6    // Serial Data In
 
-// LED pins
-#define LED_MIC 3   // RED LED for microphone activity
-#define LED_SPKR 42 // BLUE LED for speaker activity
-// Button pin
-#define BUTTON_PIN 46
+// ── I2S Speaker pins (MAX98357A, LR=GND → left channel) ───────────────────
+#define I2S_SPEAKER_BCLK 16   // Bit Clock
+#define I2S_SPEAKER_LRC  17   // Left Right Clock
+#define I2S_SPEAKER_DOUT 15   // Data Out
 
-// I2S Microphone configuration
-// #define SAMPLE_RATE 44100
-#define SAMPLE_RATE 16000
-#define SAMPLE_BITS 32
-#define CHANNELS 1
+// ── OLED Display (SSD1306 128x64) ─────────────────────────────────────────
+#define OLED_SDA 8
+#define OLED_SCL 9
+#define OLED_WIDTH 128
+#define OLED_HEIGHT 64
+#define OLED_ADDR 0x3C
 
-#define I2S_PORT_MIC I2S_NUM_0
+// ── Button (active LOW, INPUT_PULLUP) ──────────────────────────────────────
+#define BUTTON_PIN 2
+
+// ── I2S ports ───────────────────────────────────────────────────────────────
+#define I2S_PORT_MIC     I2S_NUM_0
 #define I2S_PORT_SPEAKER I2S_NUM_1
 
-// Buffer configuration
-#define bufferCnt 10
-#define bufferLen 1024
+// ── Audio configuration ─────────────────────────────────────────────────────
+// 24kHz matches OpenAI Realtime API native format (PCM16 24kHz mono)
+#define MIC_SAMPLE_RATE     24000
+#define SPEAKER_SAMPLE_RATE 24000
 
-// Audio detection thresholds
-#define MIC_THRESHOLD 2300 // Adjust based on testing
-#define LED_DELAY 1        // ms to keep LED on after sound stops
+// INMP441 outputs 24-bit data in 32-bit I2S frames
+// Must read as 32-bit and shift >> 16 to get 16-bit samples
+#define MIC_I2S_BITS I2S_BITS_PER_SAMPLE_32BIT
 
-// Test tone configuration
-#define TONE_FREQUENCY 440 // Hz (A4 note)
-#define TONE_DURATION 2000 // ms
-#define TONE_INTERVAL 5000 // ms
-#define SAMPLES_PER_BUFFER 1024
+// ── DMA buffer configuration ────────────────────────────────────────────────
+#define MIC_DMA_BUF_COUNT     8
+#define MIC_DMA_BUF_LEN       256
+#define SPEAKER_DMA_BUF_COUNT 16
+#define SPEAKER_DMA_BUF_LEN   512
 
-struct LedThreshold
-{
-    int ledPin;
-    int threshold;
-};
-
-const LedThreshold ledThresholds[] = {
-    {LED_MIC, 100},
-    // {LED_SPKR, 200},
-};
-
-enum AudioQuality
-{
-  LOW_DEFINITION = 16000,
-  OPENAI_DEFINITION = 22050,
-  MID_DEFINITION = 24000,
-  HIGH_DEFINITION = 44100,
-  ULTRA_HIGH_DEFINITION = 96000
-};
-
-const AudioQuality AUDIO_QUALITY_SPEAKER = AudioQuality::LOW_DEFINITION;
-const AudioQuality AUDIO_QUALITY = AudioQuality::HIGH_DEFINITION;
-const AudioQuality AUDIO_QUALITY_MIC = AudioQuality::HIGH_DEFINITION;
-
+// ── Mic read buffer (32-bit samples) ────────────────────────────────────────
+#define MIC_BUFFER_SAMPLES 512
 
 #endif

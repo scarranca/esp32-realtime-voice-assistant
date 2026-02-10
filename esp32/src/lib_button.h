@@ -4,21 +4,15 @@
 #include <esp32-hal-gpio.h>
 #include "config.h"
 
-
 class ButtonChecker {
 public:
     ButtonChecker() {
         pinMode(BUTTON_PIN, INPUT_PULLUP);
     }
 
-    void begin() {
-        lastTickState = false;
-        thisTickState = false;
-    }
-
     void loop() {
         lastTickState = thisTickState;
-        thisTickState = !digitalRead(BUTTON_PIN);  // Input pullup means pressed = LOW
+        thisTickState = !digitalRead(BUTTON_PIN);  // Active LOW
     }
 
     bool justPressed() {
@@ -34,8 +28,8 @@ public:
     }
 
 private:
-    bool lastTickState;
-    bool thisTickState;
+    bool lastTickState = false;
+    bool thisTickState = false;
 };
 
 #endif

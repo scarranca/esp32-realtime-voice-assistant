@@ -7,7 +7,6 @@ import { serveStatic } from "@hono/node-server/serve-static";
 
 import { INSTRUCTIONS } from "./prompt";
 import { TOOLS } from "./tools";
-import { Tool } from "@langchain/core/tools";
 import { createAsyncIterableFromWebSocket } from "./lib/utils";
 import { OpenAIVoiceReactAgent } from "./lib/agent";
 
@@ -59,7 +58,7 @@ app.get(
 
       const agent = new OpenAIVoiceReactAgent({
         instructions: INSTRUCTIONS,
-        tools: TOOLS as Tool[],
+        tools: TOOLS,
         model: "gpt-4o-realtime-preview",
         audioConfig: {
           sampleRate: 24000,  // Match ESP32 sample rate

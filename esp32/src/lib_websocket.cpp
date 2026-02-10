@@ -1,94 +1,70 @@
 #include <Arduino.h>
 #include <ArduinoWebsockets.h>
-#include "lib_speaker.h"
 #include "config.h"
+#include "lib_websocket.h"
+#include "lib_speaker.h"
 
 using namespace websockets;
 
-WebsocketsClient client;
+static WebsocketsClient client;
 
 void onMessageCallback(WebsocketsMessage message)
 {
-    Serial.print("Got Message: ");
-    // Serial.println(message.data());
-
-    if (!message.isBinary())
-    {
-        Serial.println("Received non-binary message: " + message.data());
-        // isSpeakerBusy = false;
+    if (message.isBinary()) {
+        // Binary = audio data from server → play directly on speaker
+        uint8_t *payload = (uint8_t *)message.c_str();
+        size_t length = message.length();
+        if (length > 0) {
+            speakerPlay(payload, length);
+        }
         return;
     }
 
-    uint8_t *payload = (uint8_t *)message.c_str();
-    size_t length = message.length();
-
-    if (length == 0)
-    {
-        Serial.println("Received empty audio data");
-        return;
-    }
-
-    Serial.printf("Received binary audio data of length: %zu bytes\n", length);
-    speaker_play(payload, length);
-    // playBufferWithOffset(payload, length);
-    // playBuffer((int16_t*)payload, length);
-    delay(10);
-    // InitI2SSpeakerOrMic(MODE_MIC);
+    // Text message from server (metadata, end_response, error)
+    Serial.print("[WS] ");
+    Serial.println(message.data());
 }
 
 void onEventsCallback(WebsocketsEvent event, String data)
 {
-    if (event == WebsocketsEvent::ConnectionOpened)
-    {
-        Serial.println("Connection Opened");
-    }
-    else if (event == WebsocketsEvent::ConnectionClosed)
-    {
-        Serial.println("Connection Closed");
-    }
-    else if (event == WebsocketsEvent::GotPing)
-    {
-        Serial.println("Got a Ping!");
-    }
-    else if (event == WebsocketsEvent::GotPong)
-    {
-        Serial.println("Got a Pong!");
+    switch (event) {
+        case WebsocketsEvent::ConnectionOpened:
+            Serial.println("[WS] Connected");
+            break;
+        case WebsocketsEvent::ConnectionClosed:
+            Serial.println("[WS] Disconnected");
+            break;
+        case WebsocketsEvent::GotPing:
+            Serial.println("[WS] Ping");
+            break;
+        case WebsocketsEvent::GotPong:
+            Serial.println("[WS] Pong");
+            break;
     }
 }
 
 void connectToWebSocket()
 {
-    // Configure WebSocket callbacks
     client.onMessage(onMessageCallback);
     client.onEvent(onEventsCallback);
 
-    const char *websockets_server_host = WEBSOCKET_HOST;
-    const uint16_t websockets_server_port = WEBSOCKET_PORT;
+    // Build WSS URL for Railway
+    String wsUrl = String("wss://") + WEBSOCKET_HOST + WS_PATH;
+    Serial.print("[WS] Connecting to ");
+    Serial.println(wsUrl);
 
-    // Try to connect to WebSocket server
-    bool connected = false;
-    while (!connected)
-    {
-        if (client.connect(websockets_server_host, websockets_server_port, "/device"))
-        {
-            connected = true;
-            Serial.println("WebSocket Connected!");
-            client.send("Hello Server");
-            client.ping();
-        }
-        else
-        {
-            Serial.println("WebSocket Connection Failed! Retrying in 2 seconds...");
-            delay(2000);
-        }
+    while (!client.connect(wsUrl)) {
+        Serial.println("[WS] Connection failed, retrying in 2s...");
+        delay(2000);
     }
+
+    Serial.println("[WS] Connected!");
 }
 
-void checkWebSocketConnection()
+void loopWebsocket()
 {
-    if (!client.available())
-    {
-        Serial.println("WebSocket connection lost. Reconnecting...");
+    if (!client.available()) {
+        Serial.println("[WS] Lost connection, reconnecting...");
         connectToWebSocket();
     }
     client.poll();
@@ -96,64 +72,19 @@ void checkWebSocketConnection()
 
 void sendMessage(const char *message)
 {
-    if (client.available())
-    {
+    if (client.available()) {
         client.send(message);
     }
-    else
-    {
-        Serial.println("WebSocket not connected - cannot send message");
+}
+
+void sendBinaryData(const int16_t *buffer, size_t bytes)
+{
+    if (client.available()) {
+        client.sendBinary((const char *)buffer, bytes);
     }
 }
 
-void sendButtonState(bool buttonState)
+void sendEndAudio()
 {
-    if (client.available())
-    {
-        uint8_t buttonMessage = buttonState ? 1 : 0;
-        client.sendBinary((const char *)&buttonMessage, sizeof(buttonMessage));
-    }
-    else
-    {
-        Serial.println("WebSocket not connected - cannot send button state");
-    }
-}
-
-void sendBinaryData(const int16_t *buffer, size_t bytesIn)
-{
-    if (client.available())
-    {
-        // Convert int16_t buffer to char buffer
-        const char *charBuffer = reinterpret_cast<const char *>(buffer);
-        client.sendBinary(charBuffer, bytesIn);
-    }
-    else
-    {
-        Serial.println("WebSocket not connected - cannot send binary data");
-        delay(1000);
-    }
-}
-void reconnectWSServer()
-{
-    if (!client.available())
-    {
-        Serial.println("WebSocket connection lost. Attempting to reconnect...");
-        connectToWebSocket();
-    }
-}
-
-void loopWebsocket()
-{
-    client.poll();
-    //   static unsigned long lastReconnectAttempt = 0;
-    //   unsigned long currentMillis = millis();
-
-    //   if (currentMillis - lastReconnectAttempt >= 5000)
-    //   {
-    //     lastReconnectAttempt = currentMillis;
-    //     reconnectWSServer();
-    //   }
-
-    //   setButtonState();
-    //   delay(1);
+    sendMessage("{\"type\":\"end_audio\"}");
 }
