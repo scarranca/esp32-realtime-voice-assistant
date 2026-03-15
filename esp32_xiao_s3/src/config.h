@@ -4,7 +4,7 @@
 #include <driver/i2s.h>
 
 // ── Firmware version ───────────────────────────────────────────────────────
-#define FIRMWARE_VERSION "V1.0-XIAO"
+#define FIRMWARE_VERSION "V1.1-XIAO-WW"
 
 // ── WiFi credentials ────────────────────────────────────────────────────────
 extern const char* WIFI_SSID;
@@ -42,9 +42,11 @@ extern const char* WEBSOCKET_HOST;
 #define I2S_PORT_SPEAKER I2S_NUM_1
 
 // ── Audio configuration ─────────────────────────────────────────────────────
-// 24kHz matches OpenAI Realtime API native format (PCM16 24kHz mono)
-#define MIC_SAMPLE_RATE     24000
+// Mic runs at 16kHz (WakeNet9 requirement)
+// Audio is resampled 16kHz → 24kHz before sending to OpenAI Realtime API
+#define MIC_SAMPLE_RATE     16000
 #define SPEAKER_SAMPLE_RATE 24000
+#define OPENAI_SAMPLE_RATE  24000
 
 // INMP441 outputs 24-bit data in 32-bit I2S frames
 // Must read as 32-bit and shift >> 16 to get 16-bit samples
@@ -61,24 +63,15 @@ extern const char* WEBSOCKET_HOST;
 #define SPEAKER_DMA_BUF_LEN   512
 
 // ── Mic read buffer (samples per read) ──────────────────────────────────────
-#define MIC_BUFFER_SAMPLES 512
+// WakeNet9 expects ~480 samples per frame (30ms at 16kHz)
+// Use 480 to align with WakeNet frame size
+#define MIC_BUFFER_SAMPLES 480
 
 // ── Voice Activity Detection (VAD) ──────────────────────────────────────────
-// Energy threshold to detect speech (adjust based on environment noise)
-// Higher = less sensitive, Lower = more sensitive
+// Energy threshold to detect end of speech after wake word
 #define VAD_ENERGY_THRESHOLD    500
-
-// Number of consecutive frames above threshold to confirm speech start
-#define VAD_SPEECH_FRAMES       3
-
-// Silence duration (ms) after speech to trigger end of utterance
 #define VAD_SILENCE_TIMEOUT_MS  1500
-
-// Minimum speech duration (ms) to avoid triggering on short noises
 #define VAD_MIN_SPEECH_MS       200
-
-// How many samples to use for energy calculation per frame
-#define VAD_FRAME_SAMPLES       256
 
 // ── LED indicator (built-in on XIAO ESP32-S3) ──────────────────────────────
 #define LED_PIN 21   // Built-in user LED (active LOW on XIAO)

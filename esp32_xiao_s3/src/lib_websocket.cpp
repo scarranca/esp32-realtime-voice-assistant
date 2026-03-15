@@ -3,11 +3,9 @@
 #include "config.h"
 #include "lib_websocket.h"
 #include "lib_speaker.h"
+#include "mic.h"
 
 using namespace websockets;
-
-// Defined in mic.cpp
-extern void setPlayingBack(bool playing);
 
 static WebsocketsClient client;
 static volatile bool receivingAudio = false;
@@ -15,13 +13,12 @@ static volatile bool receivingAudio = false;
 void onMessageCallback(WebsocketsMessage message)
 {
     if (message.isBinary()) {
-        // Binary = audio data from server → play on speaker
         uint8_t *payload = (uint8_t *)message.c_str();
         size_t length = message.length();
         if (length > 0) {
             if (!receivingAudio) {
                 receivingAudio = true;
-                setPlayingBack(true);
+                setMicState(MIC_PLAYBACK);
                 Serial.println("[WS] Audio playback started");
             }
             speakerPlay(payload, length);
@@ -29,16 +26,15 @@ void onMessageCallback(WebsocketsMessage message)
         return;
     }
 
-    // Text message from server
     String data = message.data();
     Serial.print("[WS] ");
     Serial.println(data);
 
-    // When response ends, re-enable mic listening
+    // When AI response ends, go back to listening for wake word
     if (data.indexOf("\"end_response\"") >= 0) {
         receivingAudio = false;
-        setPlayingBack(false);
-        Serial.println("[WS] Response complete, listening again");
+        setMicState(MIC_LISTENING);
+        Serial.println("[WS] Response complete, listening for 'Hi ESP'...");
     }
 }
 
@@ -51,7 +47,7 @@ void onEventsCallback(WebsocketsEvent event, String data)
         case WebsocketsEvent::ConnectionClosed:
             Serial.println("[WS] Disconnected");
             receivingAudio = false;
-            setPlayingBack(false);
+            setMicState(MIC_LISTENING);
             break;
         case WebsocketsEvent::GotPing:
             Serial.println("[WS] Ping");
@@ -84,7 +80,7 @@ void loopWebsocket()
     if (!client.available()) {
         Serial.println("[WS] Lost connection, reconnecting...");
         receivingAudio = false;
-        setPlayingBack(false);
+        setMicState(MIC_LISTENING);
         connectToWebSocket();
     }
     client.poll();

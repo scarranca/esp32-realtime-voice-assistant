@@ -2,25 +2,51 @@
 #include <driver/i2s.h>
 #include "config.h"
 #include "mic.h"
+#include "wake_word.h"
 #include "vad.h"
 #include "lib_websocket.h"
 
-// Playback flag - when true, mic reads are discarded to avoid echo
-static volatile bool isPlayingBack = false;
+static volatile MicState micState = MIC_LISTENING;
 
-void setPlayingBack(bool playing)
+void setMicState(MicState state)
 {
-    isPlayingBack = playing;
+    micState = state;
+}
+
+MicState getMicState()
+{
+    return micState;
+}
+
+// Resample 16kHz PCM16 → 24kHz PCM16 using linear interpolation
+// Ratio 3:2 — for every 2 input samples, produces 3 output samples
+static void resample16to24(const int16_t *in, size_t inSamples,
+                           int16_t *out, size_t *outSamples)
+{
+    size_t numOut = (inSamples * 3) / 2;
+    for (size_t j = 0; j < numOut; j++) {
+        // Input position = j * 2/3 (fixed-point: j*2 / 3)
+        uint32_t pos2 = j * 2;
+        uint32_t idx = pos2 / 3;
+        uint32_t frac = pos2 % 3;  // 0, 1, or 2
+
+        if (idx + 1 < inSamples) {
+            out[j] = (int16_t)(((3 - frac) * (int32_t)in[idx] +
+                                 frac * (int32_t)in[idx + 1]) / 3);
+        } else {
+            out[j] = in[idx < inSamples ? idx : inSamples - 1];
+        }
+    }
+    *outSamples = numOut;
 }
 
 void setupMicrophone()
 {
 #ifdef USE_INMP441_MIC
-    // External INMP441 I2S microphone
     i2s_config_t i2s_config = {
         .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
-        .sample_rate = MIC_SAMPLE_RATE,
-        .bits_per_sample = MIC_I2S_BITS,  // 32-bit for INMP441
+        .sample_rate = MIC_SAMPLE_RATE,  // 16kHz for WakeNet
+        .bits_per_sample = MIC_I2S_BITS,
         .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
         .communication_format = I2S_COMM_FORMAT_STAND_I2S,
         .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
@@ -43,18 +69,15 @@ void setupMicrophone()
         Serial.printf("[Mic] Driver install failed: %s\n", esp_err_to_name(err));
         return;
     }
-
     err = i2s_set_pin(I2S_PORT_MIC, &pin_config);
     if (err != ESP_OK) {
         Serial.printf("[Mic] Pin config failed: %s\n", esp_err_to_name(err));
         i2s_driver_uninstall(I2S_PORT_MIC);
         return;
     }
-
-    Serial.println("[Mic] INMP441 I2S initialized (24kHz, 32-bit)");
+    Serial.println("[Mic] INMP441 initialized (16kHz, 32-bit read)");
 
 #else
-    // Built-in PDM microphone (XIAO ESP32-S3 Sense)
     i2s_config_t i2s_config = {
         .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM),
         .sample_rate = MIC_SAMPLE_RATE,
@@ -81,32 +104,33 @@ void setupMicrophone()
         Serial.printf("[Mic] PDM driver install failed: %s\n", esp_err_to_name(err));
         return;
     }
-
     err = i2s_set_pin(I2S_PORT_MIC, &pin_config);
     if (err != ESP_OK) {
         Serial.printf("[Mic] PDM pin config failed: %s\n", esp_err_to_name(err));
         i2s_driver_uninstall(I2S_PORT_MIC);
         return;
     }
-
-    Serial.println("[Mic] PDM mic initialized (24kHz, 16-bit)");
+    Serial.println("[Mic] PDM mic initialized (16kHz, 16-bit)");
 #endif
-
-    vadInit();
 }
 
 void micTask(void *parameter)
 {
 #ifdef USE_INMP441_MIC
-    // Read buffer: 32-bit samples from INMP441
     int32_t rawBuffer[MIC_BUFFER_SAMPLES];
 #endif
-    // Output buffer: 16-bit PCM
     int16_t pcmBuffer[MIC_BUFFER_SAMPLES];
 
+    // Resampled buffer: 480 * 3/2 = 720 samples max
+    int16_t resampledBuffer[MIC_BUFFER_SAMPLES * 2];
+
+    // VAD state for detecting end of speech
+    unsigned long lastSpeechTime = 0;
+    unsigned long speechStartTime = 0;
+    bool speechActive = false;
+
     while (true) {
-        // During playback, keep reading but discard to prevent echo
-        if (isPlayingBack) {
+        if (micState == MIC_PLAYBACK) {
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
         }
@@ -115,52 +139,77 @@ void micTask(void *parameter)
 
 #ifdef USE_INMP441_MIC
         esp_err_t result = i2s_read(
-            I2S_PORT_MIC,
-            rawBuffer,
+            I2S_PORT_MIC, rawBuffer,
             MIC_BUFFER_SAMPLES * sizeof(int32_t),
-            &bytesRead,
-            portMAX_DELAY
+            &bytesRead, portMAX_DELAY
         );
-
         if (result != ESP_OK || bytesRead == 0) {
             vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }
-
-        // Convert 32-bit INMP441 samples to 16-bit PCM
         size_t numSamples = bytesRead / sizeof(int32_t);
         for (size_t i = 0; i < numSamples; i++) {
             pcmBuffer[i] = (int16_t)(rawBuffer[i] >> 16);
         }
 #else
-        // PDM mic reads directly as 16-bit
         esp_err_t result = i2s_read(
-            I2S_PORT_MIC,
-            pcmBuffer,
+            I2S_PORT_MIC, pcmBuffer,
             MIC_BUFFER_SAMPLES * sizeof(int16_t),
-            &bytesRead,
-            portMAX_DELAY
+            &bytesRead, portMAX_DELAY
         );
-
         if (result != ESP_OK || bytesRead == 0) {
             vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }
-
         size_t numSamples = bytesRead / sizeof(int16_t);
 #endif
 
-        // Run VAD on the PCM data
-        VadState vadState = vadProcess(pcmBuffer, numSamples);
-
-        if (vadState == VAD_SPEAKING) {
-            // Stream audio to server during speech
-            sendBinaryData(pcmBuffer, numSamples * sizeof(int16_t));
+        if (micState == MIC_LISTENING) {
+            // Feed audio to WakeNet for wake word detection
+            if (wakeWordDetect(pcmBuffer)) {
+                Serial.println("[Mic] >>> Wake word 'Hi ESP' detected! <<<");
+                micState = MIC_STREAMING;
+                speechActive = true;
+                speechStartTime = millis();
+                lastSpeechTime = millis();
+            }
         }
-        else if (vadState == VAD_TRAILING) {
-            // Speech ended - tell server to process
-            sendEndAudio();
-            vadReset();
+        else if (micState == MIC_STREAMING) {
+            // Resample 16kHz → 24kHz and send to server
+            size_t outSamples = 0;
+            resample16to24(pcmBuffer, numSamples, resampledBuffer, &outSamples);
+            sendBinaryData(resampledBuffer, outSamples * sizeof(int16_t));
+
+            // Simple energy-based VAD for end-of-speech detection
+            uint64_t energy = 0;
+            for (size_t i = 0; i < numSamples; i++) {
+                int32_t s = pcmBuffer[i];
+                energy += (uint64_t)(s * s);
+            }
+            energy /= numSamples;
+
+            bool isSpeech = energy > ((uint32_t)VAD_ENERGY_THRESHOLD * VAD_ENERGY_THRESHOLD);
+            unsigned long now = millis();
+
+            if (isSpeech) {
+                lastSpeechTime = now;
+            }
+
+            // End of speech: silence for VAD_SILENCE_TIMEOUT_MS
+            if ((now - lastSpeechTime) > VAD_SILENCE_TIMEOUT_MS) {
+                unsigned long duration = now - speechStartTime;
+                if (duration >= VAD_MIN_SPEECH_MS) {
+                    Serial.printf("[Mic] Speech ended (%lums), sending to AI\n", duration);
+                    sendEndAudio();
+                    micState = MIC_PLAYBACK;
+                    speechActive = false;
+                } else {
+                    // Too short, go back to listening
+                    Serial.println("[Mic] Too short, back to listening");
+                    micState = MIC_LISTENING;
+                    speechActive = false;
+                }
+            }
         }
 
         vTaskDelay(pdMS_TO_TICKS(1));
